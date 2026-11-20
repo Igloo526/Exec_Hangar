@@ -1,6 +1,7 @@
 import discord
 import asyncio
 import os
+import logging
 from discord.ext import commands
 from discord import app_commands
 from discord import Embed
@@ -14,16 +15,10 @@ from datetime import datetime, timezone, timedelta
 load_dotenv()
 Role_Auth = int(os.getenv("ROLE_Auth"))
 TOKEN = os.getenv("Discord_Token_Key")
-CHANGE_NAME_CHANNEL_ID = os.getenv("Change_Name_CH_ID")
 PYAM_STATUS_CHANNEL_ID = int(os.getenv("PYAM_STATUS_CHANNEL_ID", "0"))
 
 intents = discord.Intents.default()
 intents.guilds = True
-intents.guild_messages = True
-intents.voice_states = True
-intents.message_content = True
-intents.members = True
-
 
 CYCLE_DRIFT_MS = 295
 
@@ -194,54 +189,85 @@ async def pyam_status_updater():
 
 
 # Function to create an embed for the schedule command
+SCHEDULE_PAGE_SIZE = 20
+
+
 def create_schedule_embed(intervals, days, page):
 
-    per_page = 20
-    total_pages = max(1, math.ceil(len(intervals) / per_page))
+    total_pages = max(
+        1,
+        math.ceil(len(intervals) / SCHEDULE_PAGE_SIZE)
+    )
 
-    start_index = page * per_page
-    page_intervals = intervals[start_index:start_index + per_page]
+    start_index = page * SCHEDULE_PAGE_SIZE
+
+    page_intervals = intervals[
+        start_index:start_index + SCHEDULE_PAGE_SIZE
+    ]
 
     embed = discord.Embed(
         title="PYAM Hangar Schedule",
         description=(
             f"Next **{days} days** | "
             f"Page {page + 1}/{total_pages}\n"
-            "Times are displayed in your local Discord timezone."
+            "Times are displayed in your local timezone."
         ),
         color=discord.Color.blurple()
     )
+
+    cycle_values = []
+    status_values = []
+    time_values = []
+
+    initial_ms = INITIAL_OPEN_TIME.timestamp() * 1000
 
     for period in page_intervals:
 
         status = period["status"]
 
+        # Calculate the cycle number
+        period_ms = period["start"].timestamp() * 1000
+
+        cycle_number = math.floor(
+            (period_ms - initial_ms) / CYCLE_DURATION_MS
+        ) + 1
+
+        # Only display the cycle number on the ONLINE row
         if status == "ONLINE":
-            emoji = "🟩"
+            cycle_values.append(str(cycle_number))
+            status_values.append("🟢 Online")
         else:
-            emoji = "🟥"
+            cycle_values.append("\u200b")
+            status_values.append("🔴 Offline")
 
-        start = int(period["start"].timestamp())
-        finish = int(period["end"].timestamp())
+        # Discord automatically converts timestamps
+        # into the viewer's local timezone
+        start_timestamp = int(period["start"].timestamp())
 
-        if period["ongoing"]:
-            value = (
-                f"Started: <t:{start}:F>\n"
-                f"Ends: <t:{finish}:F> (<t:{finish}:R>)"
-            )
-        else:
-            value = (
-                f"Starts: <t:{start}:F>\n"
-                f"Ends: <t:{finish}:F> (<t:{finish}:R>)"
-            )
-
-        embed.add_field(
-            name=f"{emoji} {status}",
-            value=value,
-            inline=False
+        time_values.append(
+            f"<t:{start_timestamp}:f>"
         )
 
+    embed.add_field(
+        name="Cycle",
+        value="\n".join(cycle_values) or "\u200b",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Status",
+        value="\n".join(status_values) or "\u200b",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Local Time",
+        value="\n".join(time_values) or "\u200b",
+        inline=True
+    )
+
     return embed
+
 
 # View class for the schedule command with pagination
 class ScheduleView(discord.ui.View):
@@ -255,7 +281,7 @@ class ScheduleView(discord.ui.View):
         self.page = 0
 
         self.total_pages = max(
-            1, math.ceil(len(intervals) / 20)
+            1, math.ceil(len(intervals) / SCHEDULE_PAGE_SIZE)
         )
 
         self.update_buttons()
@@ -368,10 +394,16 @@ async def before_pyam_update():
 
 
 
-# Check bot online 
+# Check bot online
 @bot.event
 async def on_ready():
 
+    print(f"{bot.user.name} connected!")
+
+    for guild in bot.guilds:
+        print(f"Server: {guild.name} | ID: {guild.id}")
+
+    print(f"Connected to {len(bot.guilds)} server(s)")
     print(f"{bot.user.name} Ready To Online!")
 
     activity = discord.Streaming(
@@ -390,6 +422,7 @@ async def on_ready():
         pyam_status_updater.start()
 
 
+discord.utils.setup_logging(level=logging.DEBUG)
 
 bot.run(TOKEN)
 
